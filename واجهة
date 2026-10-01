@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>نظام حجوزات العيادة</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f4f7f6;--card:#fff;--tx:#17302b;--mut:#6b7f7a;--pr:#0f766e;--onpr:#fff;--bd:#d9e4e1;--warn:#b45309;--ok:#15803d}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10201d;--card:#173029;--tx:#e6f2ef;--mut:#9bb3ad;--pr:#2dd4bf;--onpr:#06201b;--bd:#27463e;--warn:#fbbf24;--ok:#4ade80}}
+:root[data-theme="dark"]{--bg:#10201d;--card:#173029;--tx:#e6f2ef;--mut:#9bb3ad;--pr:#2dd4bf;--onpr:#06201b;--bd:#27463e;--warn:#fbbf24;--ok:#4ade80}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:"Segoe UI",Tahoma,Arial,sans-serif;line-height:1.6}
+.wrap{max-width:760px;margin:0 auto;padding:16px}
+h1{font-size:1.3rem;margin:4px 0 12px}
+h2{font-size:1.05rem;margin:0 0 10px}
+.tabs{display:flex;gap:6px;margin-bottom:14px}
+.tabs button{flex:1;padding:10px 4px;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:10px;font:inherit;cursor:pointer}
+.tabs button.on{background:var(--pr);color:var(--onpr);border-color:var(--pr)}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:12px}
+label{display:block;font-size:.85rem;color:var(--mut);margin:8px 0 3px}
+input,select,textarea{width:100%;padding:9px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font:inherit}
+textarea{min-height:70px}
+.btn{padding:10px 16px;border:0;border-radius:10px;background:var(--pr);color:var(--onpr);font:inherit;cursor:pointer;margin-top:10px}
+.btn.sec{background:transparent;color:var(--pr);border:1px solid var(--pr)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.slots{display:flex;flex-wrap:wrap;gap:6px}
+.slots button{padding:7px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font:inherit;cursor:pointer}
+.slots button.on{background:var(--pr);color:var(--onpr)}
+.slots button:disabled{opacity:.35;text-decoration:line-through;cursor:not-allowed}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid var(--bd)}
+.row:last-child{border:0}
+.num{font-weight:700;font-size:1.1rem;color:var(--pr);min-width:52px}
+.tag{font-size:.75rem;padding:2px 8px;border-radius:99px;border:1px solid var(--bd);color:var(--mut)}
+.tag.in{color:var(--warn);border-color:var(--warn)}
+.tag.done{color:var(--ok);border-color:var(--ok)}
+.big{text-align:center;padding:18px}
+.big .n{font-size:2.6rem;font-weight:800;color:var(--pr)}
+.mut{color:var(--mut);font-size:.9rem}
+.warn{background:var(--card);border:1px solid var(--warn);color:var(--warn);padding:10px;border-radius:10px;margin-bottom:12px;font-size:.9rem}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>🩺 عيادة الدكتور — نظام الحجوزات</h1>
+<div id="warn" class="warn" hidden>قاعدة البيانات المشتركة غير متاحة، الصفحة تشتغل بوضع تجريبي على هذا الجهاز فقط.</div>
+<div class="tabs">
+<button data-t="p" class="on">حجز موعد</button>
+<button data-t="s">السكرتير</button>
+<button data-t="d">الطبيب</button>
+</div>
+<div id="v"></div>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+const pad=n=>String(n).padStart(2,'0');
+const dstr=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+const TODAY=()=>dstr(new Date());
+const SLOTS=[];for(let m=9*60;m<13*60;m+=20)SLOTS.push(pad(Math.floor(m/60))+':'+pad(m%60));
+const DAYS=(()=>{const r=[],d=new Date();while(r.length<7){if(d.getDay()!==5)r.push(dstr(d));d.setDate(d.getDate()+1)}return r})();
+const dlabel=s=>new Date(s+'T00:00').toLocaleDateString('ar-IQ',{weekday:'long',day:'numeric',month:'long'});
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+let db=null,col=null,appts=[],tab='p',openId=null,done=null;
+let form={name:'',phone:'',age:'',complaint:'',tests:'',date:DAYS[0],time:''};
+const mem={};
+
+async function save(id,data,isNew){
+  if(col){
+    try{ if(isNew) await col.doc(id).set(data); else await col.doc(id).update(data); }
+    catch(e){ alert('تعذر الحفظ: '+(e&&e.message||'خطأ')); }
+  }else{ mem[id]=Object.assign(mem[id]||{},data); appts=Object.keys(mem).map(k=>Object.assign({id:k},mem[k])); render(); }
+}
+async function exists(id){
+  if(col){ try{ return (await col.doc(id).get()).exists; }catch(e){ return false; } }
+  return !!mem[id];
+}
+async function newNumber(){
+  for(let i=0;i<20;i++){ const n=String(100+Math.floor(Math.random()*900)); if(!(await exists(n))) return n; }
+  return String(Date.now()).slice(-5);
+}
+
+function taken(date){return appts.filter(a=>a.date===date&&a.status!=='cancelled').map(a=>a.time)}
+const byTime=(a,b)=>(a.date+a.time).localeCompare(b.date+b.time);
+
+function render(){
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===tab));
+  const v=$('#v');
+  const focus=document.activeElement&&document.activeElement.id;
+  const sel=focus&&document.activeElement.selectionStart;
+  v.innerHTML= tab==='p'?viewP(): tab==='s'?viewS(): viewD();
+  if(focus&&$('#'+focus)){const e=$('#'+focus);e.focus();try{e.setSelectionRange(sel,sel)}catch(_){}}
+}
+
+function viewP(){
+  if(done){return `<div class="card big"><div class="mut">تم تأكيد حجزك</div><div class="n">${esc(done.num)}</div>
+  <div><b>${esc(done.name)}</b></div><div class="mut">${esc(dlabel(done.date))} — الساعة ${esc(done.time)}</div>
+  <p class="mut">احتفظ برقم الحجز وأبرزه للسكرتير عند وصولك.</p>
+  <button class="btn" data-a="again">حجز جديد</button></div>`;}
+  const tk=taken(form.date);
+  return `<div class="card"><h2>بيانات المريض</h2>
+  <label>الاسم الكامل</label><input id="f_name" value="${esc(form.name)}">
+  <div class="grid"><div><label>رقم الهاتف</label><input id="f_phone" inputmode="tel" value="${esc(form.phone)}"></div>
+  <div><label>العمر</label><input id="f_age" inputmode="numeric" value="${esc(form.age)}"></div></div>
+  <label>الشكوى / سبب الزيارة</label><textarea id="f_complaint">${esc(form.complaint)}</textarea>
+  <label>تحاليل أو فحوصات سابقة (اختياري)</label><textarea id="f_tests">${esc(form.tests)}</textarea></div>
+  <div class="card"><h2>اختر اليوم والوقت</h2>
+  <label>اليوم</label><select id="f_date">${DAYS.map(d=>`<option value="${d}" ${d===form.date?'selected':''}>${esc(dlabel(d))}</option>`).join('')}</select>
+  <label>الوقت</label><div class="slots">${SLOTS.map(t=>`<button data-a="slot" data-t="${t}" class="${form.time===t?'on':''}" ${tk.includes(t)?'disabled':''}>${t}</button>`).join('')}</div>
+  <button class="btn" data-a="book" ${form.name.trim()&&form.phone.trim()&&form.time?'':'disabled'}>تأكيد الحجز</button></div>`;
+}
+
+function viewS(){
+  const t=TODAY();
+  const list=appts.filter(a=>a.date===t&&a.status!=='cancelled').sort(byTime);
+  const inRoom=list.find(a=>a.status==='in');
+  const waiting=list.filter(a=>a.status==='waiting');
+  const next=waiting[0];
+  return `<div class="card"><h2>حالة الطبيب</h2>
+  ${inRoom?`<div>🔴 عند الطبيب الآن: <b>${esc(inRoom.name)}</b> <span class="num">#${esc(inRoom.id)}</span></div><div class="mut">انتظر الطبيب يضغط «تم الفحص» حتى تدخل المريض الجاي.</div>`
+  :`<div>🟢 الطبيب فاضي</div>`}
+  <button class="btn" data-a="admit" data-id="${next?esc(next.id):''}" ${(!inRoom&&next)?'':'disabled'}>${next?'إدخال المريض التالي: '+esc(next.name):'ما كو مرضى بالانتظار'}</button></div>
+  <div class="card"><h2>حجوزات اليوم (${list.length})</h2>
+  ${list.length?list.map(a=>`<div class="row"><span class="num">#${esc(a.id)}</span><div style="flex:1"><b>${esc(a.name)}</b><div class="mut">${esc(a.time)} — ${esc(a.phone)}</div></div>
+  <span class="tag ${a.status}">${a.status==='waiting'?'بالانتظار':a.status==='in'?'عند الطبيب':'تم الفحص'}</span>
+  ${a.status==='waiting'?`<button class="btn sec" style="margin:0" data-a="admit" data-id="${esc(a.id)}" ${inRoom?'disabled':''}>إدخال</button>`:''}</div>`).join(''):'<div class="mut">ما كو حجوزات لليوم.</div>'}</div>
+  <div class="card"><h2>حجوزات الأيام القادمة</h2>
+  ${appts.filter(a=>a.date>t&&a.status!=='cancelled').sort(byTime).map(a=>`<div class="row"><span class="num">#${esc(a.id)}</span><div style="flex:1"><b>${esc(a.name)}</b><div class="mut">${esc(dlabel(a.date))} — ${esc(a.time)}</div></div></div>`).join('')||'<div class="mut">لا يوجد.</div>'}</div>`;
+}
+
+function viewD(){
+  const t=TODAY();
+  const list=appts.filter(a=>a.date===t&&a.status!=='cancelled').sort(byTime);
+  const cur=list.find(a=>a.status==='in');
+  const sel=appts.find(a=>a.id===openId)||cur;
+  const rec=a=>`<div class="card"><h2>${esc(a.name)} <span class="num">#${esc(a.id)}</span></h2>
+  <div class="mut">العمر: ${esc(a.age||'—')} | الهاتف: ${esc(a.phone)} | ${esc(dlabel(a.date))} ${esc(a.time)}</div>
+  <label>الشكوى</label><div>${esc(a.complaint||'—')}</div>
+  <label>التحاليل والفحوصات السابقة (من المريض)</label><div>${esc(a.tests||'—')}</div>
+  <label>الفحص السريري</label><textarea id="d_exam">${esc(a.exam||'')}</textarea>
+  <label>التشخيص والعلاج / ملاحظات الطبيب</label><textarea id="d_notes">${esc(a.notes||'')}</textarea>
+  <button class="btn sec" data-a="savenotes" data-id="${esc(a.id)}">حفظ الملاحظات</button>
+  ${a.status==='in'?`<button class="btn" data-a="finish" data-id="${esc(a.id)}">✔ تم الفحص</button>`:''}</div>`;
+  return `${sel?rec(sel):'<div class="card big mut">ما كو مريض عند الطبيب حالياً. السكرتير يدخل المريض التالي.</div>'}
+  <div class="card"><h2>قائمة اليوم</h2>${list.map(a=>`<div class="row"><span class="num">#${esc(a.id)}</span><div style="flex:1"><b>${esc(a.name)}</b><div class="mut">${esc(a.time)}</div></div>
+  <span class="tag ${a.status}">${a.status==='waiting'?'بالانتظار':a.status==='in'?'عند الطبيب':'تم الفحص'}</span>
+  <button class="btn sec" style="margin:0" data-a="open" data-id="${esc(a.id)}">السجل</button></div>`).join('')||'<div class="mut">لا يوجد.</div>'}</div>`;
+}
+
+document.addEventListener('click',async e=>{
+  const tb=e.target.closest('.tabs button'); if(tb){tab=tb.dataset.t;openId=null;render();return}
+  const b=e.target.closest('[data-a]'); if(!b||b.disabled)return;
+  const a=b.dataset.a,id=b.dataset.id;
+  if(a==='slot'){form.time=b.dataset.t;render()}
+  else if(a==='again'){done=null;form={name:'',phone:'',age:'',complaint:'',tests:'',date:DAYS[0],time:''};render()}
+  else if(a==='book'){
+    b.disabled=true;
+    if(taken(form.date).includes(form.time)){alert('هذا الوقت انحجز قبل شوي، اختر وقت ثاني');form.time='';render();return}
+    const num=await newNumber();
+    const rec={num,name:form.name.trim(),phone:form.phone.trim(),age:form.age.trim(),complaint:form.complaint.trim(),tests:form.tests.trim(),date:form.date,time:form.time,status:'waiting',exam:'',notes:'',createdAt:Date.now()};
+    await save(num,rec,true); done=rec; render();
+  }
+  else if(a==='admit'&&id){await save(id,{status:'in'});}
+  else if(a==='finish'){await save(id,{status:'done',exam:($('#d_exam')||{}).value||'',notes:($('#d_notes')||{}).value||''});openId=null;}
+  else if(a==='savenotes'){await save(id,{exam:$('#d_exam').value,notes:$('#d_notes').value});b.textContent='تم الحفظ ✓'}
+  else if(a==='open'){openId=id;render();window.scrollTo(0,0)}
+});
+document.addEventListener('input',e=>{
+  const m=/^f_(\w+)$/.exec(e.target.id||''); if(!m)return;
+  form[m[1]]=e.target.value;
+  if(m[1]==='date'){form.time='';render();return}
+  const btn=document.querySelector('[data-a="book"]'); if(btn)btn.disabled=!(form.name.trim()&&form.phone.trim()&&form.time);
+});
+
+(async()=>{
+  try{ if(window.claude&&claude.use) db=await claude.use("db"); }catch(e){db=null}
+  if(db){
+    col=db.collection('appointments');
+    col.onSnapshot(s=>{
+      appts=s.docs.map(d=>Object.assign({id:d.id},d.data()));
+      const ae=document.activeElement;
+      if(ae&&/^(d_|f_)/.test(ae.id||'')&&tab==='d'&&ae.id.startsWith('d_'))return;
+      render();
+    },err=>{$('#warn').hidden=false});
+  }else{ $('#warn').hidden=false; }
+  render();
+})();
+</script>
+</body>
+</html>
